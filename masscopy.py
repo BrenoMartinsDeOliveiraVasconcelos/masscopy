@@ -13,7 +13,7 @@ def list_str(items: str):
 
 
 def console_log(message: str, message2 = str(""), value = float(0), tp = int(0), value_avaliable = bool(True)) -> None:
-    verbosity = args.verbosity.lower()
+    verbosity = args.verbosity
 
     # Types
     types = ["EXECUTION", "WARNING", "ERROR", "INFO"]
@@ -28,20 +28,12 @@ def console_log(message: str, message2 = str(""), value = float(0), tp = int(0),
         if msg_type == "ERROR":
             sys.exit(1)
     else:
-        if verbosity == "y":
+        if verbosity:
             print(f"[{msg_type}] {message} -> {message2}: ", end="")
             if value_avaliable:
                 print(f"{value:.2f}%")
             else:
                 print("Unknown%")
-
-
-def is_boolean(text: str) -> bool:
-    # Check if it's a boolean
-    if text in "YyNn":
-        return True
-    else:
-        return False
 
 
 # Get the hash of a file
@@ -65,6 +57,7 @@ def list_dir(path: str, exclude: list, specific_list: list, is_main: bool) -> li
             
             # Path to each file
             for i in files:
+
                 if i not in exclude:
                     files_list.append(os.path.join(path, i))
         except NotADirectoryError:
@@ -83,8 +76,11 @@ def list_dir(path: str, exclude: list, specific_list: list, is_main: bool) -> li
     return files_list
 
 
-def copy_to(origin: str, dst: str, chunk_size: int, check_integrity: str, exclude: list, specific_list: list, is_main: bool, method: str) -> list:
-    files = list_dir(origin, exclude, specific_list, is_main) # Get the list of files
+def copy_to(origin: str, dst: str, chunk_size: int, check_integrity: bool, exclude: list, specific_list: list, is_main: bool, method: str, del_after: bool, copy_folder_not_files: bool) -> list:
+    if not copy_folder_not_files:
+        files = list_dir(origin, exclude, specific_list, is_main, copy_folder_not_files) # Get the list of files
+    else:
+        files = [origin]
 
     # No work to do
     if len(files) <= 0:
@@ -118,7 +114,7 @@ def copy_to(origin: str, dst: str, chunk_size: int, check_integrity: str, exclud
                 os.makedirs(output_path)
 
         # Get all the hashes of origin folder to check integrity later
-        if os.path.isfile(file) and check_integrity == "y":
+        if os.path.isfile(file) and check_integrity:
             hashes.append(get_hash(file, chunk_size))
         
         output_paths.append(output_path)
@@ -147,8 +143,11 @@ def copy_to(origin: str, dst: str, chunk_size: int, check_integrity: str, exclud
 
         # Recursion if it's a directory so the folder content is also copied
         if os.path.isdir(file):
-            copy_to(file, output_path, chunk_size, check_integrity, exclude, specific_list, False, method)
-            index_nodir -= 1
+            if not copy_folder_not_files:
+                copy_to(file, output_path, chunk_size, check_integrity, exclude, specific_list, False, method, del_after, copy_folder_not_files)
+                index_nodir -= 1
+            else:
+                shutil.copytree(file, output_path, dirs_exist_ok=True)
             continue
 
         # Copy the file
@@ -182,7 +181,7 @@ def copy_to(origin: str, dst: str, chunk_size: int, check_integrity: str, exclud
             shutil.copy(file, output_path)
 
         # Checks integrity
-        if check_integrity == "y":
+        if check_integrity:
             origin_fileh = hashes[index_nodir]
             dst_hash = get_hash(output_path, chunk_size)
 
@@ -210,6 +209,17 @@ def copy_to(origin: str, dst: str, chunk_size: int, check_integrity: str, exclud
 
             open(f"{filename}_path.txt", "w+").write(f"{file}")
 
+
+    # Delete after copyin
+    if del_after:
+        for file in files:
+            try:
+                os.remove(file)
+                console_log(message=f"Deleted '{file}'.", tp=0)
+            except PermissionError:
+                console_log(message=f"Couldn't delete '{file}', Permission denied.", tp=1)
+
+
     return stored_corruptions
 
 
@@ -220,23 +230,11 @@ def main(args):
     if args.chunk_size <= 0:
         console_log(message="Chunk size should be at least 1 byte.", tp=2)
 
-    if not is_boolean(args.check_integrity):
-        console_log(message="Check integrity check must be y or n.", tp=2)
-
-    if not is_boolean(args.verbosity):
-        console_log(message="Verbosity must be y or n.", tp=2)
-
-    if not is_boolean(args.execution_time):
-        console_log(message="Execution time must be y or n", tp=2)
-
     if args.mode.lower() not in ["system", "detailed"]:
         console_log(message="Mode must be 'system' or 'detailed'.", tp=2)
 
-    check_integrity = args.check_integrity.lower()
-    execution_time = args.execution_time.lower()
-
     try:
-        damaged = copy_to(args.paths[0], args.paths[1], args.chunk_size, check_integrity, args.exclude, args.specify, True, args.mode)
+        damaged = copy_to(args.paths[0], args.paths[1], args.chunk_size, args.check_integrity, args.exclude, args.specify, True, args.mode, args.delete_after_copy, args.copy_folder_not_files)
     except FileNotFoundError:
         console_log(message="No such file or directoroy.", tp=2)
     except NotADirectoryError:
@@ -250,7 +248,7 @@ def main(args):
     else:
         console_log(message="All files copied successfully.", tp=3)
 
-    if execution_time == "y":
+    if args.execution_time:
         etime = time.time() # End of execution time
         run_time = etime - stime # Full execution time
 
@@ -262,17 +260,18 @@ if __name__ ==  '__main__':
     parse = argparse.ArgumentParser(prog="Mass Copy", description="Copy in mass files and directories")
     parse.add_argument("paths", type=str, nargs=2, help="Source and destination paths")
     parse.add_argument("--chunk_size", "-c", type=int, default=67108864, help="Chunk size in bytes") # Chunk size in 
-    parse.add_argument("--check_integrity", "-i", type=str, default="y", help="Check for integrity. y to yes, anything else to no.")
-    parse.add_argument("--verbosity", "-v", type=str, default="y", help="Defines verbosity")
-    parse.add_argument("--execution_time", "-e", default="n", type=str, help="Show execution time")
+    parse.add_argument("--check_integrity", "-i", action="store_true", help="Check for integrity.")
+    parse.add_argument("--verbosity", "-v", action="store_true", help="Enable verbosity")
+    parse.add_argument("--execution_time", "-e", action="store_true", help="Show execution time")
     parse.add_argument("--exclude", "-x", type=list_str, default="", help="List of files (on source path) separated by ',' to be ignored. (Full path after source's last path.\nEx: Source = /home/user, so exclude would be exclude (/home/user/exclude))")
     parse.add_argument("--specify", "-s", type=list_str, default="", help="Specification of which files on source path will be copied, separated by comma (','). (Full path after source's last path.\nEx: Source = /home/user, so  only 'include/a,include2/b would be copied.'")
     parse.add_argument("--mode", "-m", default="system", type=str, help="Use 'system' for a syscall or 'detailed' for a detailed (but slower) copy method.")
+    parse.add_argument("--delete_after_copy", "-d", action="store_true", help="Delete the source files after the copy.")
+    parse.add_argument("--copy_folder_not_files", "-f", action="store_true", help="Copy the folder instead of its files")
     args = parse.parse_args()
 
     try:
         main(args)
     except PermissionError:
         console_log(message="Permission denied.", tp=2)
-    except (IOError, TypeError):
-        console_log(message="No files to be copied.", tp=2)
+
